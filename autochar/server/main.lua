@@ -1,75 +1,47 @@
-local usedAddresses = {}
-
--- Register the net event to handle the spawn logic
-RegisterNetEvent("spawnPlayerAndCar")
-AddEventHandler("spawnPlayerAndCar", function()
-    local _source = source
-
-    -- Check if player already has an address
-    if usedAddresses[_source] then
-        local address = Config.Addresses[usedAddresses[_source]]
-        spawnPlayerAndCar(_source, address)
-    else
-        -- Find a random unused address
-        local availableAddresses = {}
-        for i, address in ipairs(Config.Addresses) do
-            if not isAddressUsed(i) then
-                table.insert(availableAddresses, i)
-            end
-        end
-
-        if #availableAddresses > 0 then
-            local addressIndex = availableAddresses[math.random(#availableAddresses)]
-            usedAddresses[_source] = addressIndex
-            local address = Config.Addresses[addressIndex]
-            spawnPlayerAndCar(_source, address)
-        else
-            TriggerClientEvent("chat:addMessage", _source, {args = {"System", "No available addresses."}})
-        end
-    end
-end)
-
-AddEventHandler("playerDropped", function(reason)
-    local _source = source
-    if usedAddresses[_source] then
-        usedAddresses[_source] = nil
-    end
-end)
-
-function isAddressUsed(addressIndex)
-    for _, index in pairs(usedAddresses) do
-        if index == addressIndex then
-            return true
-        end
-    end
-    return false
-end
-
-function spawnPlayerAndCar(playerId, address)
-    -- Select a random vehicle and ped
-    local vehicleModel = Config.Vehicles[math.random(#Config.Vehicles)]
-    local pedModel = Config.Peds[math.random(#Config.Peds)]
-
-    -- Select a random name and surname
-    local firstName = Config.Names[math.random(#Config.Names)]
-    local lastName = Config.Surnames[math.random(#Config.Surnames)]
-    local fullName = firstName .. " " .. lastName
-
-    -- Spawn the player
-    TriggerClientEvent("spawnPlayerAtAddress", playerId, vector3(address.playerPos.x, address.playerPos.y, address.playerPos.z), address.playerPos.w, pedModel, vector3(address.playerPos.x, address.playerPos.y, address.playerPos.z))
-
-    -- Spawn the vehicle
-    TriggerClientEvent("spawnVehicleAtAddress", playerId, address.carPos, vehicleModel, fullName, address.name)
-end
-
-RegisterNetEvent("vehicleDataFromClient")
-AddEventHandler("vehicleDataFromClient", function(vehicleModel, primaryColor, licensePlate, playerName, playerAddress)
+-- Handles the /spawn command and assigns an available address to the player
+RegisterCommand('spawn', function(source)
     local playerId = source
-    -- Display the player's name, address, and vehicle data
-    TriggerClientEvent("displayPlayerName", playerId, playerName)
-    TriggerClientEvent("displayVehicleData", playerId, vehicleModel, primaryColor, licensePlate)
-    TriggerClientEvent("displayPlayerAddress", playerId, playerAddress)
+    local chosenAddress = nil
 
-    -- Notify the player
-    TriggerClientEvent("chat:addMessage", playerId, {args = {"System", "You have been spawned at " .. playerAddress}})
+    -- Find an available address
+    for _, address in ipairs(Config.Addresses) do
+        if not address.isBusy then
+            chosenAddress = address
+            address.isBusy = true -- Mark the address as busy for everyone
+            break
+        end
+    end
+
+    -- If no addresses are available, notify the player
+    if not chosenAddress then
+        TriggerClientEvent('chat:addMessage', playerId, { args = { '^1No available addresses!' }})
+        return
+    end
+
+    -- Send the chosen address to the client for the player to spawn there
+    TriggerClientEvent('spawnPlayer', playerId, chosenAddress)
+end)
+
+-- Handles the /addresses debug command
+RegisterCommand('addresses', function(source)
+    local playerId = source
+
+    -- Loop through all addresses and send their status to the player
+    for _, address in ipairs(Config.Addresses) do
+        local status = address.isBusy and "Busy" or "Available"
+        TriggerClientEvent('chat:addMessage', playerId, {
+            args = { string.format("Address: %s, Status: %s", address.name, status) }
+        })
+    end
+end)
+
+-- Handles freeing an address when the player requests it
+RegisterNetEvent('freeAddress')
+AddEventHandler('freeAddress', function(addressName)
+    for _, address in ipairs(Config.Addresses) do
+        if address.name == addressName then
+            address.isBusy = false -- Free up the address
+            break
+        end
+    end
 end)
