@@ -163,13 +163,14 @@ local colorNames = {
 local playerMarkers = {}
 local displayInfo = {}
 local currentAddress = nil -- Track the current assigned address for the player
+local currentVehicle = nil -- Track the player's current vehicle
 
 -- Function to display text on screen
 function DrawTextOnScreen(text, x, y, scale, center)
-    SetTextFont(4) -- Modern font
+    SetTextFont(4)
     SetTextProportional(1)
     SetTextScale(scale, scale)
-    SetTextColour(255, 255, 255, 200) -- Slightly transparent white
+    SetTextColour(255, 255, 255, 200)
     SetTextDropshadow(0, 0, 0, 0, 255)
     SetTextEdge(1, 0, 0, 0, 255)
     SetTextDropShadow()
@@ -185,22 +186,31 @@ RegisterNetEvent('spawnPlayer')
 AddEventHandler('spawnPlayer', function(chosenAddress)
     local player = PlayerPedId()
 
-    -- If the player already has an address, free the previous one
+    -- If the player already has an address and vehicle, remove the vehicle and free the previous address
     if currentAddress then
+        -- Delete the current vehicle
+        if currentVehicle and DoesEntityExist(currentVehicle) then
+            DeleteVehicle(currentVehicle)
+            currentVehicle = nil
+        end
+
+        -- Notify the server to free the previous address
         TriggerServerEvent('freeAddress', currentAddress.name)
         currentAddress = nil
     end
+
+    -- Assign the new address and save it
+    currentAddress = chosenAddress
+    TriggerServerEvent('savePlayerAddress', currentAddress.name)
 
     -- Nationality-based logic for player name, ped model, and vehicle
     local nationality = chosenAddress.nationality
     local nameConfig = Config.Names[nationality]
 
     if nameConfig then
-        -- Choose random first and last name based on nationality
+        -- Assign name and ped model
         local firstName = nameConfig.firstNames[math.random(#nameConfig.firstNames)]
         local lastName = nameConfig.lastNames[math.random(#nameConfig.lastNames)]
-
-        -- Choose random ped model based on nationality
         local pedModel = nameConfig.pedModels[math.random(#nameConfig.pedModels)]
 
         -- Load and apply the ped model
@@ -216,7 +226,7 @@ AddEventHandler('spawnPlayer', function(chosenAddress)
         SetEntityHeading(player, chosenAddress.playerPos.w)
         NetworkResurrectLocalPlayer(chosenAddress.playerPos.x, chosenAddress.playerPos.y, chosenAddress.playerPos.z, chosenAddress.playerPos.w, true, false)
 
-        -- Choose a random vehicle from the nationality-specific vehicle list
+        -- Spawn a random vehicle at the car position
         local chosenVehicleModel = nameConfig.vehicles[math.random(#nameConfig.vehicles)]
         local vehicleHash = GetHashKey(chosenVehicleModel)
 
@@ -225,12 +235,12 @@ AddEventHandler('spawnPlayer', function(chosenAddress)
             Wait(100)
         end
 
-        local vehicle = CreateVehicle(vehicleHash, chosenAddress.carPos.x, chosenAddress.carPos.y, chosenAddress.carPos.z, chosenAddress.carPos.w, true, false)
+        currentVehicle = CreateVehicle(vehicleHash, chosenAddress.carPos.x, chosenAddress.carPos.y, chosenAddress.carPos.z, chosenAddress.carPos.w, true, false)
 
         -- Get vehicle color and plate
-        local primaryColor, _ = GetVehicleColours(vehicle)
+        local primaryColor, _ = GetVehicleColours(currentVehicle)
         local colorName = colorNames[primaryColor] or "Unknown Color"
-        local plate = GetVehicleNumberPlateText(vehicle)
+        local plate = GetVehicleNumberPlateText(currentVehicle)
 
         -- Store the information to be displayed
         displayInfo = {
@@ -242,9 +252,6 @@ AddEventHandler('spawnPlayer', function(chosenAddress)
             plate = plate
         }
 
-        -- Save the current address
-        currentAddress = chosenAddress
-
         -- Add markers (blips) for house and car
         if playerMarkers[PlayerId()] then
             RemoveBlip(playerMarkers[PlayerId()].house)
@@ -254,7 +261,7 @@ AddEventHandler('spawnPlayer', function(chosenAddress)
         local houseBlip = AddBlipForCoord(chosenAddress.playerPos.x, chosenAddress.playerPos.y, chosenAddress.playerPos.z)
         SetBlipSprite(houseBlip, 40) -- House icon
 
-        local carBlip = AddBlipForEntity(vehicle)
+        local carBlip = AddBlipForEntity(currentVehicle)
         SetBlipSprite(carBlip, 225) -- Car icon
 
         playerMarkers[PlayerId()] = { house = houseBlip, car = carBlip }
@@ -267,8 +274,6 @@ end)
 Citizen.CreateThread(function()
     while true do
         Wait(0)
-
-        -- If displayInfo is not empty, draw the information on the screen
         if displayInfo.name then
             local x = 0.015
             local y = 0.60 -- Display near the bottom left
@@ -281,5 +286,19 @@ Citizen.CreateThread(function()
             DrawTextOnScreen("Color: " .. displayInfo.color, x, y + 0.1, scale, false)
             DrawTextOnScreen("Plate: " .. displayInfo.plate, x, y + 0.125, scale, false)
         end
+    end
+end)
+
+-- Notify the server to free the player's address when they leave and remove the vehicle
+AddEventHandler('playerDropped', function(reason)
+    if currentAddress then
+        -- Remove the vehicle
+        if currentVehicle and DoesEntityExist(currentVehicle) then
+            DeleteVehicle(currentVehicle)
+            currentVehicle = nil
+        end
+
+        -- Free the address on the server
+        TriggerServerEvent('freeAddress', currentAddress.name)
     end
 end)
